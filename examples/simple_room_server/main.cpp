@@ -3,6 +3,13 @@
 
 #include "MyMesh.h"
 
+#if defined(ESP32) && defined(WIFI_SSID)
+  #include <WiFi.h>
+  #ifndef TCP_PORT
+    #define TCP_PORT 5000
+  #endif
+#endif
+
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
   static UITask ui_task(display);
@@ -17,6 +24,46 @@ void halt() {
 }
 
 static char command[MAX_POST_TEXT_LEN+1];
+#if defined(ESP32) && defined(WIFI_SSID)
+static char wifi_command[MAX_POST_TEXT_LEN+1];
+static WiFiServer wifi_server(TCP_PORT);
+static WiFiClient wifi_client;
+static bool wifi_connected_reported = false;
+#endif
+
+static void handleCommandInput(Stream& input, Print& output, char* cmd_buf, size_t cmd_buf_size, bool echo_input) {
+  while (input.available()) {
+    char c = input.read();
+    size_t len = strlen(cmd_buf);
+
+    if (c == '\r' || c == '\n') {
+      if (echo_input) output.print(c);
+      if (len == 0) continue;
+
+      char reply[160];
+      the_mesh.handleCommand(0, cmd_buf, reply);  // NOTE: there is no sender_timestamp via serial/WiFi!
+      if (reply[0]) {
+        output.print("  -> "); output.println(reply);
+      }
+      cmd_buf[0] = 0;
+      continue;
+    }
+
+    if (len < cmd_buf_size - 1) {
+      cmd_buf[len++] = c;
+      cmd_buf[len] = 0;
+      if (echo_input) output.print(c);
+    } else {
+      // command buffer full, process whatever was captured
+      char reply[160];
+      the_mesh.handleCommand(0, cmd_buf, reply);  // NOTE: there is no sender_timestamp via serial/WiFi!
+      if (reply[0]) {
+        output.print("  -> "); output.println(reply);
+      }
+      cmd_buf[0] = 0;
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -72,6 +119,12 @@ void setup() {
 
   the_mesh.begin(fs);
 
+#if defined(ESP32) && defined(WIFI_SSID)
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PWD);
+  wifi_server.begin();
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -83,29 +136,29 @@ void setup() {
 }
 
 void loop() {
-  int len = strlen(command);
-  while (Serial.available() && len < sizeof(command)-1) {
-    char c = Serial.read();
-    if (c != '\n') {
-      command[len++] = c;
-      command[len] = 0;
-    }
-    Serial.print(c);
-  }
-  if (len == sizeof(command)-1) {  // command buffer full
-    command[sizeof(command)-1] = '\r';
+  handleCommandInput(Serial, Serial, command, sizeof(command), true);
+
+#if defined(ESP32) && defined(WIFI_SSID)
+  if (WiFi.status() == WL_CONNECTED && !wifi_connected_reported) {
+    wifi_connected_reported = true;
+    Serial.print("WiFi connected, IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("WiFi command port: ");
+    Serial.println((int)TCP_PORT);
   }
 
-  if (len > 0 && command[len - 1] == '\r') {  // received complete line
-    command[len - 1] = 0;  // replace newline with C string null terminator
-    char reply[160];
-    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
-    if (reply[0]) {
-      Serial.print("  -> "); Serial.println(reply);
+  if (!wifi_client || !wifi_client.connected()) {
+    auto next_client = wifi_server.available();
+    if (next_client) {
+      if (wifi_client) wifi_client.stop();
+      wifi_client = next_client;
+      wifi_command[0] = 0;
     }
-
-    command[0] = 0;  // reset command buffer
   }
+  if (wifi_client && wifi_client.connected()) {
+    handleCommandInput(wifi_client, wifi_client, wifi_command, sizeof(wifi_command), false);
+  }
+#endif
 
   the_mesh.loop();
   sensors.loop();
