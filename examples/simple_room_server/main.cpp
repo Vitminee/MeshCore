@@ -24,7 +24,9 @@ void halt() {
 }
 
 static char command[MAX_POST_TEXT_LEN+1];
+#define COMMAND_REPLY_MAX_LEN 160
 #if defined(ESP32) && defined(WIFI_SSID)
+#define WIFI_STATUS_LOG_INTERVAL_MS 10000
 static char wifi_command[MAX_POST_TEXT_LEN+1];
 static WiFiServer wifi_server(TCP_PORT);
 static WiFiClient wifi_client;
@@ -33,6 +35,8 @@ static unsigned long next_wifi_status_log = 0;
 #endif
 
 static void handleCommandInput(Stream& input, Print& output, char* cmd_buf, size_t cmd_buf_size, bool echo_input) {
+  if (cmd_buf == NULL || cmd_buf_size == 0) return;
+
   while (input.available()) {
     char c = input.read();
     size_t len = strlen(cmd_buf);
@@ -41,7 +45,7 @@ static void handleCommandInput(Stream& input, Print& output, char* cmd_buf, size
       if (echo_input) output.print(c);
       if (len == 0) continue;
 
-      char reply[160];
+      char reply[COMMAND_REPLY_MAX_LEN];
       the_mesh.handleCommand(0, cmd_buf, reply);  // NOTE: there is no sender_timestamp via serial/WiFi!
       if (reply[0]) {
         output.print("  -> "); output.println(reply);
@@ -56,7 +60,7 @@ static void handleCommandInput(Stream& input, Print& output, char* cmd_buf, size
       if (echo_input) output.print(c);
     } else {
       // command buffer full, process whatever was captured
-      char reply[160];
+      char reply[COMMAND_REPLY_MAX_LEN];
       the_mesh.handleCommand(0, cmd_buf, reply);  // NOTE: there is no sender_timestamp via serial/WiFi!
       if (reply[0]) {
         output.print("  -> "); output.println(reply);
@@ -146,9 +150,9 @@ void loop() {
     Serial.print("WiFi connected, IP: ");
     Serial.println(WiFi.localIP());
     Serial.print("WiFi command port: ");
-    Serial.println((int)TCP_PORT);
+    Serial.println(TCP_PORT);
   } else if (WiFi.status() != WL_CONNECTED && millis() >= next_wifi_status_log) {
-    next_wifi_status_log = millis() + 10000;
+    next_wifi_status_log = millis() + WIFI_STATUS_LOG_INTERVAL_MS;
     Serial.println("WiFi not connected yet (room server command channel).");
   }
 
