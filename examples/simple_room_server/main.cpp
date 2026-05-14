@@ -29,6 +29,7 @@ static char wifi_command[MAX_POST_TEXT_LEN+1];
 static WiFiServer wifi_server(TCP_PORT);
 static WiFiClient wifi_client;
 static bool wifi_connected_reported = false;
+static unsigned long next_wifi_status_log = 0;
 #endif
 
 static void handleCommandInput(Stream& input, Print& output, char* cmd_buf, size_t cmd_buf_size, bool echo_input) {
@@ -122,6 +123,7 @@ void setup() {
 #if defined(ESP32) && defined(WIFI_SSID)
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PWD);
+  Serial.println("Connecting WiFi for room server command channel...");
   wifi_server.begin();
 #endif
 
@@ -145,6 +147,9 @@ void loop() {
     Serial.println(WiFi.localIP());
     Serial.print("WiFi command port: ");
     Serial.println((int)TCP_PORT);
+  } else if (WiFi.status() != WL_CONNECTED && millis() >= next_wifi_status_log) {
+    next_wifi_status_log = millis() + 10000;
+    Serial.println("WiFi not connected yet (room server command channel).");
   }
 
   if (!wifi_client || !wifi_client.connected()) {
